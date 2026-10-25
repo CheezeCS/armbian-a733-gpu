@@ -47,9 +47,12 @@ original, except the four places adapted for 6.6 and apercel's vendored GPUVM
 (`drm_gpuva_link_img()`). Tested on an Orange Pi Zero 3W: module load, Vulkan
 compute, sway + vkcube + Vesktop, no kernel warnings, timeouts or resets.
 
-Not backported: `144d47f90536` (depends on upstream's power-domain rework, which
-apercel does not have), refactors, RISC-V/TH1520 and other SoC support, and
-changes tied to newer DRM core APIs.
+Not backported: `144d47f90536` (not applicable: it fixes a regression from
+`e19cc5ab347e3`, the switch to `dev_pm_domain_attach_list()`, which apercel
+does not have; apercel's older `pvr_power_domains_init()` is fine with the
+single power domain of the A733 GPU, since `pvr_device` is zero-allocated and
+the matching fini is a no-op), refactors, RISC-V/TH1520 and other SoC support,
+and changes tied to newer DRM core APIs.
 
 These belong in apercel itself; `upstream-fixes` is ready to be proposed
 there.
