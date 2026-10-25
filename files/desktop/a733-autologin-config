@@ -1,0 +1,26 @@
+#!/bin/sh
+# SPDX-License-Identifier: MIT
+#
+# ExecCondition of greetd.service (images built with --autologin): write the
+# greetd config that starts sway for the first regular user once at boot.
+# The user is created on first login (armbian-firstlogin), after the image is
+# built; until then greetd is skipped (exit 1), so the first-login dialog on
+# the console is not covered. Reboot once after creating the user.
+# greetd's PAM session says XDG_SESSION_TYPE=tty; sway's clients (Electron,
+# Qt) pick Wayland from XDG_SESSION_TYPE=wayland, so set it for the session.
+
+user="$(getent passwd | awk -F: '$3 >= 1000 && $3 < 60000 && $7 !~ /(nologin|false)$/ { print $1; exit }')"
+[ -n "$user" ] || exit 1
+
+cat > /run/a733-greetd.toml <<EOF
+[terminal]
+vt = 7
+
+[default_session]
+command = "/usr/sbin/agreety --cmd /usr/bin/sway"
+user = "_greetd"
+
+[initial_session]
+command = "/usr/bin/env XDG_SESSION_TYPE=wayland XDG_CURRENT_DESKTOP=sway /usr/bin/sway"
+user = "$user"
+EOF

@@ -22,7 +22,10 @@ What this repository adds:
 
 - an **Armbian extension** that builds `apercel.ko` with the image kernel, swaps
   out `pvrsrvkm` and installs the **open firmware** (pinned and checksummed);
-- an on-board **Mesa build script** for the apercel patches (Debian trixie);
+- **Mesa with the apercel patches in the image**: `build.sh` cross-compiles it
+  in a Debian trixie chroot into an `a733-mesa` package; an on-board build
+  script does the same natively;
+- optional **sway** desktop, with autologin, as `build.sh` options;
 - a **kernel fix for HDMI "no signal"** after boot or cable re-plug, a bug in
   the vendor `sunxi-drm` display driver (plus a user-space workaround for the
   stock kernel);
@@ -62,7 +65,7 @@ Tested on an **Orange Pi Zero 3W** (4 GB), Armbian trixie, kernel
 | Xfce / X11 session | not tested; expected without GPU acceleration (no glamor path for the split display/render devices) |
 | Suspend/resume, long-running stability | not tested |
 | `build.sh --kernel-only` (kernel + apercel packages) | built and installed on the test board |
-| `build.sh` full image | not yet run end to end |
+| `build.sh --desktop sway --autologin` full image (Mesa cross-compiled, `a733-mesa` package) | flashed and booted: apercel + firmware, Vulkan 1.3, GL 3.2 / GLES 3.1 via zink, fan, sway autologin on HDMI from the second boot |
 
 Other A733 boards (Orange Pi 4 Pro, Radxa Cubie A7A/A7Z) use the same SoC and
 GPU. apercel itself was developed on an Orange Pi 4 Pro. Reports welcome.
@@ -81,6 +84,8 @@ cd armbian-a733-gpu
 ./build.sh                       # Orange Pi Zero 3W, trixie
 ./build.sh --board orangepi4pro  # other sun60iw2 boards
 ./build.sh --kernel-only         # only the kernel packages (linux-image with apercel.ko)
+./build.sh --mesa-only           # only the Mesa package (work/mesa-debs/)
+./build.sh --desktop sway --autologin   # image with sway, started at boot
 ```
 
 `build.sh` checks out `armbian/build` and apercel (the fork) at tested
@@ -90,8 +95,19 @@ commits, copies apercel, the extension and the kernel patches into
 example `./build.sh -- PREFER_DOCKER=no` (needed in WSL2 with Docker Desktop
 installed but not usable by the build user).
 
-The image contains no Mesa build: the Mesa version that matters (with the
-apercel changes) is built on the board, see below.
+By default the image is a CLI image with Mesa 26.3.0-rc2 + apercel installed
+(`a733-mesa` package, under `/usr/local`; `--mesa 26.1.8` or `--mesa none` to
+change that). Mesa is cross-compiled for arm64 in a Debian trixie chroot
+(`work/mesa-chroot`, created with `mmdebstrap`; an amd64 host is needed) and
+the package is cached by Mesa version, build script and patches, so later
+image builds reuse it.
+
+`--desktop sway` adds sway, foot, Xwayland and wmenu (start sway from a
+console login). `--autologin` also installs greetd, which starts sway on VT 7
+for the first regular user at boot. That user is created by Armbian's
+first-login dialog after flashing, so autologin starts from the second boot.
+greetd starts the autologin session once per boot: after leaving sway (or
+restarting greetd) VT 7 shows a text login (`agreety`) that starts sway.
 
 ### Option B: an existing Armbian install
 
@@ -119,10 +135,14 @@ is a `pvrsrvkm` build and the open driver rejects it with
 
 ### Mesa (on the board)
 
+Images built by `build.sh` already contain Mesa. To build it on a board
+(other version, other prefix, or an image without it):
+
 ```bash
 sudo a733-build-mesa                 # Mesa 26.3.0-rc2 + apercel -> /usr/local (30-45 min)
 sudo a733-build-mesa --mesa 26.1.8   # apercel's original patch
 sudo a733-build-mesa --prefix /opt/mesa-test   # side by side; try it with tools/mesa-run
+sudo a733-build-mesa --deb /tmp/debs # an a733-mesa package instead of installing
 a733-gpu-check
 ```
 
@@ -152,6 +172,7 @@ files/                           everything installed on the board
   mesa/                          a733-build-mesa (on-board Mesa build)
   hdmi-fix/                      HDMI workaround for the stock kernel (udev + systemd)
   overlay/, fan/                 Zero 3W fan: DT overlay + on/off control service
+  desktop/                       sway autologin through greetd (--autologin)
   sbin/, systemd/                CPU governor + GPU IRQ affinity at boot
   tools/a733-gpu-check           status report
 tools/                           test helpers (not installed)

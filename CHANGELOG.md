@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Mesa is part of the image: `build.sh` cross-compiles Mesa + apercel for
+  arm64 in a Debian trixie chroot (`a733-build-mesa --cross --deb`: build-machine
+  `mesa_clc`, `vtn_bindgen2` and `pco_clc`, then Mesa without LLVM) and the
+  extension installs the resulting `a733-mesa` package. New options
+  `--mesa VERSION|none` and `--mesa-only`; the package is cached.
+- `build.sh --desktop sway [--autologin]`: sway, foot, Xwayland in the image;
+  autologin through greetd for the first regular user.
+
 - Armbian extension `apercel-a733`: builds apercel with the image kernel,
   replaces `pvrsrvkm`, installs the open RGX firmware pinned to
   imagination/linux-firmware `8a58f818` with SHA256 verification (the previous

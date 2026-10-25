@@ -9,7 +9,9 @@
 #     https://github.com/CheezeCS/apercel with backported upstream fixes),
 #     built against the image kernel;
 #   - the open-source RGX firmware from Imagination's linux-firmware repository;
-#   - an on-board script that builds Mesa (PowerVR Vulkan + zink) from source.
+#   - Mesa (PowerVR Vulkan + zink) with the apercel changes: the a733-mesa
+#     package cross-compiled by build.sh, and the on-board build script;
+#   - optionally sway (A733_DESKTOP=sway) and sway autologin (A733_AUTOLOGIN=yes).
 # The kernel patches next to this extension make the helpers buildable (0011)
 # and fix HDMI after hot-plug in the vendor sunxi-drm driver (0012).
 #
@@ -133,7 +135,33 @@ function post_family_tweaks__apercel_a733_rootfs() {
 
 	# vulkan-tools / mesa-utils for quick checks (vulkaninfo, eglinfo)
 	chroot_sdcard_apt_get_install vulkan-tools mesa-utils
+
+	# --- Mesa cross-compiled by build.sh (a733-build-mesa --cross --deb) ---
+	local deb
+	for deb in "${files}"/debs/a733-mesa_*.deb; do
+		[[ -f "${deb}" ]] || continue
+		display_alert "apercel-a733: installing" "$(basename "${deb}")" "info"
+		run_host_command_logged install -m 644 "${deb}" "${SDCARD}/tmp/"
+		chroot_sdcard_apt_get_install "/tmp/$(basename "${deb}")"
+		rm -f "${SDCARD}/tmp/$(basename "${deb}")"
+	done
 	chroot_sdcard ldconfig
+
+	# --- optional desktop (build.sh --desktop sway [--autologin]) ---
+	if [[ "${A733_DESKTOP:-none}" == "sway" ]]; then
+		display_alert "apercel-a733: desktop" "sway, autologin ${A733_AUTOLOGIN:-no}" "info"
+		chroot_sdcard_apt_get_install sway foot xwayland swaybg wmenu fonts-dejavu-core
+		if [[ "${A733_AUTOLOGIN:-no}" == "yes" ]]; then
+			chroot_sdcard_apt_get_install greetd
+			run_host_command_logged install -m 755 -D "${files}/desktop/a733-autologin-config" \
+				"${SDCARD}/usr/local/sbin/a733-autologin-config"
+			run_host_command_logged install -m 644 -D "${files}/desktop/greetd-a733.conf" \
+				"${SDCARD}/etc/systemd/system/greetd.service.d/a733-autologin.conf"
+			sed -i 's/\r$//' "${SDCARD}/usr/local/sbin/a733-autologin-config" \
+				"${SDCARD}/etc/systemd/system/greetd.service.d/a733-autologin.conf"
+			chroot_sdcard systemctl --no-reload enable greetd.service
+		fi
+	fi
 }
 
 # armbianEnv.txt is only complete at the end of the image build: enable the fan

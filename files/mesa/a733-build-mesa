@@ -2,12 +2,15 @@
 # SPDX-License-Identifier: MIT
 #
 # Build Mesa (Imagination PowerVR Vulkan driver + zink) with the apercel
-# changes, natively on an A733 board. Takes 30-45 minutes on the board.
+# changes. Natively on an A733 board (30-45 minutes), or cross-compiled for
+# arm64 on an amd64 Debian trixie system (what build.sh does for images).
 #
 #   sudo a733-build-mesa                 # Mesa 26.3.0-rc2 -> /usr/local (default)
 #   sudo a733-build-mesa --mesa 26.1.8   # apercel's original 26.1.8 patch
 #   sudo a733-build-mesa --prefix /opt/mesa-test
 #   sudo a733-build-mesa --apercel /path/to/apercel   # default /usr/src/apercel
+#   sudo a733-build-mesa --deb DIR       # build a733-mesa_*.deb into DIR, install nothing
+#   sudo a733-build-mesa --cross --deb DIR   # same, cross-compiled on amd64 trixie
 #
 # The patches come from the apercel checkout (mesa/apercel-mesa*.patch).
 # Mesa 26.3 adds VK_EXT_transform_feedback for PowerVR (mesa!44385), which
@@ -21,7 +24,9 @@ MESA=26.3.0-rc2
 PREFIX=/usr/local
 WORKDIR=/var/tmp/a733-mesa
 APERCEL_SRC=/usr/src/apercel
-JOBS=6   # 4 GB boards run out of memory with the default (nproc + 2)
+JOBS=      # default: 6 on the board (4 GB boards run out of memory with more), nproc when cross
+DEB_DIR=
+CROSS=no
 
 while [ $# -gt 0 ]; do
 	case "$1" in
@@ -30,7 +35,9 @@ while [ $# -gt 0 ]; do
 		--workdir) WORKDIR="$2"; shift 2 ;;
 		--jobs) JOBS="$2"; shift 2 ;;
 		--apercel) APERCEL_SRC="$2"; shift 2 ;;
-		-h | --help) sed -n '3,18p' "$0"; exit 0 ;;
+		--deb) DEB_DIR="$2"; shift 2 ;;
+		--cross) CROSS=yes; shift ;;
+		-h | --help) sed -n '3,20p' "$0"; exit 0 ;;
 		*) echo "unknown option: $1" >&2; exit 2 ;;
 	esac
 done
@@ -48,18 +55,41 @@ case "$MESA" in
 esac
 [ -f "$PATCH" ] || { echo "patch not found: $PATCH" >&2; exit 1; }
 [ "$(id -u)" = 0 ] || { echo "run as root (installs packages and into $PREFIX)" >&2; exit 1; }
+if [ "$CROSS" = yes ]; then
+	[ "$(dpkg --print-architecture)" = amd64 ] || { echo "--cross needs an amd64 Debian system" >&2; exit 1; }
+	[ -n "$DEB_DIR" ] || { echo "--cross needs --deb DIR" >&2; exit 1; }
+	ARCH=arm64
+	JOBS="${JOBS:-$(nproc)}"
+else
+	ARCH="$(dpkg --print-architecture)"
+	JOBS="${JOBS:-6}"
+fi
+TRIPLET=aarch64-linux-gnu
 
 export DEBIAN_FRONTEND=noninteractive
 # The PowerVR Vulkan driver compiles its internal shaders with mesa-clc, which
 # needs LLVM, clang and the SPIR-V translator of one LLVM major (19 on Trixie).
-apt-get update
-apt-get install -y build-essential meson ninja-build python3 python3-mako python3-yaml \
-	flex bison pkg-config zlib1g-dev libzstd-dev libexpat1-dev libdrm-dev libvulkan-dev \
-	clang libclang-cpp-dev libclang-19-dev llvm-19-dev libllvmspirvlib-19-dev spirv-tools \
-	libwayland-dev libwayland-egl-backend-dev wayland-protocols libudev-dev \
-	libx11-dev libxext-dev libxfixes-dev libx11-xcb-dev libxcb1-dev libxrandr-dev \
-	libxcb-glx0-dev libxcb-dri3-dev libxcb-present-dev libxcb-shm0-dev libxcb-randr0-dev \
-	libxcb-sync-dev libxshmfence-dev libxxf86vm-dev curl xz-utils patch
+# Cross builds run these tools on the build machine and link Mesa against the
+# arm64 libraries of the same release (multiarch).
+target_libs=(zlib1g-dev libzstd-dev libexpat1-dev libdrm-dev libvulkan-dev
+	libwayland-dev libwayland-egl-backend-dev libudev-dev
+	libx11-dev libxext-dev libxfixes-dev libx11-xcb-dev libxcb1-dev libxrandr-dev
+	libxcb-glx0-dev libxcb-dri3-dev libxcb-present-dev libxcb-shm0-dev libxcb-randr0-dev
+	libxcb-sync-dev libxshmfence-dev libxxf86vm-dev)
+build_tools=(build-essential meson ninja-build python3 python3-mako python3-yaml
+	flex bison pkg-config wayland-protocols curl xz-utils patch
+	clang libclang-cpp-dev libclang-19-dev llvm-19-dev libllvmspirvlib-19-dev spirv-tools)
+if [ "$CROSS" = yes ]; then
+	dpkg --print-foreign-architectures | grep -qx arm64 || dpkg --add-architecture arm64
+	# native zlib/zstd/expat/drm/wayland for the build-machine tools, arm64 for Mesa
+	apt-get update
+	apt-get install -y "${build_tools[@]}" crossbuild-essential-arm64 \
+		zlib1g-dev libzstd-dev libexpat1-dev libdrm-dev libwayland-dev \
+		"${target_libs[@]/%/:arm64}"
+else
+	apt-get update
+	apt-get install -y "${build_tools[@]}" "${target_libs[@]}"
+fi
 export PATH="/usr/lib/llvm-19/bin:$PATH"
 
 mkdir -p "$WORKDIR" && cd "$WORKDIR"
@@ -78,13 +108,97 @@ if [ "$MESA" = 26.1.8 ] && ! grep -q DRM_PVR_BO_CPU_CACHED include/drm-uapi/pvr_
 		include/drm-uapi/pvr_drm.h
 fi
 
-meson setup b --prefix="$PREFIX" -Dbuildtype=release \
-	-Dvulkan-drivers=imagination -Dgallium-drivers=zink \
-	-Degl=enabled -Dgbm=enabled -Dopengl=true \
-	-Dgles1=disabled -Dgles2=enabled \
-	-Dplatforms=x11,wayland -Dglx=dri -Dxlib-lease=disabled \
-	-Dllvm=enabled -Dmesa-clc=enabled -Dshader-cache=enabled -Dbuild-tests=false
-ninja -C b -j"$JOBS"
-ninja -C b install
-ldconfig
-echo "Mesa $MESA installed to $PREFIX. Log out and back in (or reboot), then run a733-gpu-check."
+# shellcheck disable=SC2054 # the comma in -Dplatforms=x11,wayland is meson's
+meson_args=(--prefix="$PREFIX" --libdir="lib/$TRIPLET" -Dbuildtype=release
+	-Dvulkan-drivers=imagination -Dgallium-drivers=zink
+	-Degl=enabled -Dgbm=enabled -Dopengl=true
+	-Dgles1=disabled -Dgles2=enabled
+	-Dplatforms=x11,wayland -Dglx=dri -Dxlib-lease=disabled
+	-Dshader-cache=enabled -Dbuild-tests=false)
+if [ "$CROSS" = yes ]; then
+	# 1. mesa_clc, vtn_bindgen2, pco_clc and pdsc_precomp for the build machine
+	meson setup b-host --prefix="$WORKDIR/host-tools" -Dbuildtype=release \
+		-Dvulkan-drivers=imagination -Dgallium-drivers= -Dplatforms= \
+		-Degl=disabled -Dgbm=disabled -Dglx=disabled -Dopengl=false -Dgles1=disabled -Dgles2=disabled \
+		-Dllvm=enabled -Dmesa-clc=enabled -Dprecomp-compiler=enabled -Dbuild-tests=false
+	host_tools=(src/compiler/clc/mesa_clc src/compiler/spirv/vtn_bindgen2 src/imagination/pco/uscgen/pco_clc src/imagination/pdsc/pdsc_precomp)
+	ninja -C b-host -j"$JOBS" "${host_tools[@]}"
+	install -d "$WORKDIR/host-tools/bin"
+	for t in "${host_tools[@]}"; do
+		install -m 755 "b-host/$t" "$WORKDIR/host-tools/bin/"
+	done
+	# 2. Mesa for arm64; the target needs no LLVM once mesa-clc is external
+	cat > "$WORKDIR/cross-arm64.ini" <<-EOF
+		[binaries]
+		c = '$TRIPLET-gcc'
+		cpp = '$TRIPLET-g++'
+		ar = '$TRIPLET-ar'
+		strip = '$TRIPLET-strip'
+		pkg-config = 'pkg-config'
+
+		[properties]
+		pkg_config_libdir = ['/usr/lib/$TRIPLET/pkgconfig', '/usr/share/pkgconfig']
+
+		[host_machine]
+		system = 'linux'
+		cpu_family = 'aarch64'
+		cpu = 'aarch64'
+		endian = 'little'
+	EOF
+	PATH="$WORKDIR/host-tools/bin:$PATH" meson setup b --cross-file "$WORKDIR/cross-arm64.ini" \
+		"${meson_args[@]}" -Dllvm=disabled -Dmesa-clc=system -Dprecomp-compiler=system
+	PATH="$WORKDIR/host-tools/bin:$PATH" ninja -C b -j"$JOBS"
+else
+	meson setup b "${meson_args[@]}" -Dllvm=enabled -Dmesa-clc=enabled
+	ninja -C b -j"$JOBS"
+fi
+
+if [ -z "$DEB_DIR" ]; then
+	ninja -C b install
+	ldconfig
+	echo "Mesa $MESA installed to $PREFIX. Log out and back in (or reboot), then run a733-gpu-check."
+	exit 0
+fi
+
+# --- package: a733-mesa_<version>_<arch>.deb ---
+stage="$WORKDIR/pkg"
+rm -rf "$stage"
+DESTDIR="$stage" meson install -C b --strip --no-rebuild --quiet
+patch_id="$(tr -d '\r' < "$PATCH" | sha256sum | cut -c1-8)"
+version="${MESA/-/\~}+apercel.$patch_id"
+
+# Library dependencies from the ELF files; dpkg-shlibdeps wants a debian/control.
+meta="$WORKDIR/pkg-meta"
+rm -rf "$meta" && mkdir -p "$meta/debian"
+printf 'Source: a733-mesa\n\nPackage: a733-mesa\nArchitecture: %s\n' "$ARCH" > "$meta/debian/control"
+elfs=()
+while IFS= read -r -d '' f; do
+	[ "$(head -c4 "$f" | tr -d '\0')" = $'\x7fELF' ] && elfs+=("$f")
+done < <(find "$stage" -type f -print0)
+shlibs="$(cd "$meta" && DEB_HOST_ARCH="$ARCH" dpkg-shlibdeps -O --ignore-missing-info \
+	-l"$stage$PREFIX/lib/$TRIPLET" "${elfs[@]}" | sed -n 's/^shlibs:Depends=//p')"
+
+# Mesa is built without GLVND: its own libEGL/libGL/libGLESv2/libgbm in
+# /usr/local shadow Debian's libraries of the same soname (ld.so searches
+# /usr/local/lib/<triplet> first). Only the Vulkan loader comes from Debian.
+install -d "$stage/DEBIAN"
+cat > "$stage/DEBIAN/control" <<-EOF
+	Package: a733-mesa
+	Version: $version
+	Architecture: $ARCH
+	Maintainer: a733-build-mesa <root@localhost>
+	Section: libs
+	Priority: optional
+	Installed-Size: $(du -sk --exclude=DEBIAN "$stage" | cut -f1)
+	Depends: $shlibs, libvulkan1
+	Homepage: https://github.com/CheezeCS/armbian-a733-gpu
+	Description: Mesa $MESA with the apercel changes (A733 PowerVR)
+	 Imagination PowerVR Vulkan driver and zink (OpenGL / OpenGL ES on Vulkan)
+	 for the open apercel kernel driver, installed under $PREFIX.
+	 Built by a733-build-mesa.
+EOF
+echo "activate-noawait ldconfig" > "$stage/DEBIAN/triggers"
+mkdir -p "$DEB_DIR"
+deb="$DEB_DIR/a733-mesa_${version}_${ARCH}.deb"
+dpkg-deb --root-owner-group -Zxz --build "$stage" "$deb"
+echo "Built $deb"

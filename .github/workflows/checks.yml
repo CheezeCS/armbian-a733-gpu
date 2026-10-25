@@ -13,6 +13,7 @@ jobs:
         run: |
           for f in build.sh armbian/userpatches/extensions/*.sh files/mesa/a733-build-mesa \
                    files/sbin/* files/hdmi-fix/hdmi-console-restore files/tools/* files/fan/a733-fan-control \
+                   files/desktop/a733-autologin-config \
                    tools/headless-weston-run tools/mesa-run tools/image-preset-wifi; do
             bash -n "$f"
           done
@@ -20,6 +21,7 @@ jobs:
         run: |
           sudo apt-get install -y shellcheck
           shellcheck -S warning build.sh files/mesa/a733-build-mesa files/sbin/* \
+            files/desktop/a733-autologin-config \
             files/hdmi-fix/hdmi-console-restore files/tools/* files/fan/a733-fan-control \
             tools/headless-weston-run tools/mesa-run tools/image-preset-wifi
       - name: No CRLF
