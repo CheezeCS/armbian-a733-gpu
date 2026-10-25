@@ -1,0 +1,97 @@
+drm/sunxi: hdmi: restore the output after an HPD replug
+
+On HPD loss _sunxi_drv_hdmi_hpd_plugout() powers the TMDS output down
+(sunxi_hdmi_disconfig) but the DRM CRTC/connector state stays active, and
+_sunxi_drv_hdmi_hpd_plugin() only re-reads the EDID. Nothing ever enables
+the output again, so after a cable replug -- or after the monitor drops
+HPD by itself while hunting for an active input, which typically happens
+~30 s after boot -- the sink shows "no signal" until userspace forces a
+full modeset.
+
+When the sink comes back and the CRTC driving the connector is still
+active while the HDMI driver is disabled, commit that CRTC with
+connectors_changed set, i.e. a full disable + mode_set + enable cycle
+(what drm_atomic_helper_reset_crtc() does in newer kernels).
+
+--- a/bsp/drivers/drm/sunxi_drm_hdmi.c
++++ b/bsp/drivers/drm/sunxi_drm_hdmi.c
+@@ -23,7 +23,9 @@
+ 
+ #include <drm/drm_of.h>
+ #include <drm/drm_connector.h>
++#include <drm/drm_atomic.h>
+ #include <drm/drm_atomic_helper.h>
++#include <drm/drm_modeset_lock.h>
+ #include <drm/drm_simple_kms_helper.h>
+ #include <drm/drm_probe_helper.h>
+ #if LINUX_VERSION_CODE < KERNEL_VERSION(6, 1, 0)
+@@ -1424,6 +1426,59 @@
+ 	return 0;
+ }
+ 
++/*
++ * Plugout powers the TMDS output down (_sunxi_drv_hdmi_disable) but the DRM
++ * CRTC/connector state stays active, so a plain plugin never enables it again
++ * and the sink reports "no signal" until userspace does a full modeset.
++ * Monitors also drop HPD on their own while hunting for an input, which makes
++ * this hit right after boot. When the sink comes back while the CRTC is still
++ * active, force a full modeset (disable + mode_set + enable) of that CRTC.
++ */
++static int _sunxi_drv_hdmi_restore_output(struct sunxi_drm_hdmi *hdmi)
++{
++	struct drm_device *drm = hdmi->sdrm.drm_dev;
++	struct drm_connector *connector = &hdmi->sdrm.connector;
++	struct drm_modeset_acquire_ctx ctx;
++	struct drm_atomic_state *state;
++	struct drm_crtc_state *crtc_state;
++	struct drm_crtc *crtc;
++	int ret = 0;
++
++	if (IS_ERR_OR_NULL(drm) || hdmi->hdmi_ctrl.drv_pm_state)
++		return 0;
++
++	DRM_MODESET_LOCK_ALL_BEGIN(drm, ctx, 0, ret);
++
++	crtc = connector->state ? connector->state->crtc : NULL;
++	if (!crtc || !crtc->state->active || hdmi->hdmi_ctrl.drv_enable)
++		goto out;
++
++	state = drm_atomic_state_alloc(drm);
++	if (!state) {
++		ret = -ENOMEM;
++		goto out;
++	}
++	state->acquire_ctx = &ctx;
++
++	crtc_state = drm_atomic_get_crtc_state(state, crtc);
++	if (IS_ERR(crtc_state)) {
++		ret = PTR_ERR(crtc_state);
++	} else {
++		crtc_state->connectors_changed = true;
++		ret = drm_atomic_commit(state);
++	}
++	drm_atomic_state_put(state);
++
++	if (!ret)
++		hdmi_inf("hdmi drv restore output after hpd plugin\n");
++
++out:
++	DRM_MODESET_LOCK_ALL_END(drm, ctx, ret);
++	if (ret)
++		hdmi_err("hdmi drv restore output failed: %d\n", ret);
++	return ret;
++}
++
+ /**
+  * @return: 0 - normal
+  *          1 - hpd force mode
+@@ -1498,6 +1553,9 @@
+ 
+ 		_sunxi_drv_hdmi_hpd_set(hdmi, temp_hpd);
+ 
++		if (temp_hpd)
++			_sunxi_drv_hdmi_restore_output(hdmi);
++
+ next_loop:
+ 		_sunxi_drv_hdcp_state_polling(hdmi);
+ 		hdmi_msleep(20);

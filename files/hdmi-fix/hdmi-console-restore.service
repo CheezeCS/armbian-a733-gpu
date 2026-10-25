@@ -1,0 +1,10 @@
+[Unit]
+Description=Re-enable HDMI output and fbcon after hotplug (sunxi-drm workaround)
+After=systemd-udev-settle.service systemd-modules-load.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/hdmi-console-restore
+
+[Install]
+WantedBy=multi-user.target

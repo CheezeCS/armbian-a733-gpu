@@ -1,0 +1,45 @@
+#!/bin/bash
+# SPDX-License-Identifier: MIT
+#
+# Run one Wayland client under a throw-away headless Weston (GL renderer, so the
+# compositor itself uses the GPU), with a time limit. Useful for testing GPU
+# clients over SSH without a monitor or desktop session.
+#
+#   headless-weston-run [-t SECONDS] [-l LOGFILE] -- COMMAND [ARGS...]
+#
+# Exit status is the client's; 137 means it was still running at the limit.
+# Needs: weston.
+
+set -u
+secs=30
+log=/tmp/headless-weston-client.log
+while getopts "t:l:h" o; do
+	case "$o" in
+		t) secs="$OPTARG" ;;
+		l) log="$OPTARG" ;;
+		*) sed -n '4,12p' "$0"; exit 2 ;;
+	esac
+done
+shift $((OPTIND - 1))
+[ "${1:-}" = "--" ] && shift
+[ $# -gt 0 ] || { sed -n '4,12p' "$0"; exit 2; }
+
+export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/tmp/xdg-$(id -u)}"
+mkdir -p "$XDG_RUNTIME_DIR" && chmod 700 "$XDG_RUNTIME_DIR"
+socket="hwr-$$"
+
+weston --backend=headless --renderer=gl --width=1920 --height=1080 \
+	--socket="$socket" --idle-time=0 > "${log%.log}.weston.log" 2>&1 &
+wpid=$!
+for _ in $(seq 1 50); do
+	[ -S "$XDG_RUNTIME_DIR/$socket" ] && break
+	sleep 0.1
+done
+[ -S "$XDG_RUNTIME_DIR/$socket" ] || { echo "weston did not start, see ${log%.log}.weston.log" >&2; kill "$wpid" 2> /dev/null; exit 1; }
+
+WAYLAND_DISPLAY="$socket" timeout -s KILL "$secs" "$@" > "$log" 2>&1
+rc=$?
+kill "$wpid" 2> /dev/null
+wait "$wpid" 2> /dev/null
+echo "exit status $rc (137 = killed at the ${secs}s limit), output in $log" >&2
+exit "$rc"

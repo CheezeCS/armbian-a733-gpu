@@ -1,0 +1,3 @@
+# sunxi-drm (vendor A733 display driver) does not re-enable HDMI after the
+# monitor drops HPD; restore it on every DRM hotplug uevent.
+ACTION=="change", SUBSYSTEM=="drm", KERNEL=="card[0-9]*", ENV{HOTPLUG}=="1", DEVPATH=="*sunxi-drm*", RUN+="/usr/bin/systemctl --no-block start hdmi-console-restore.service"

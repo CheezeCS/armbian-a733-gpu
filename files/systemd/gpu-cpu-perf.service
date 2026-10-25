@@ -1,0 +1,10 @@
+[Unit]
+Description=CPU performance governor + GPU IRQ affinity for apercel
+After=multi-user.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/apercel-boot-tune
+
+[Install]
+WantedBy=multi-user.target

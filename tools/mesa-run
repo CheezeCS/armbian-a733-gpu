@@ -1,0 +1,23 @@
+#!/bin/sh
+# SPDX-License-Identifier: MIT
+#
+# Run one command against a Mesa installed in a separate prefix (for example a
+# test build made with `a733-build-mesa --prefix /opt/mesa-test`), leaving the
+# system Mesa untouched.
+#
+#   MESA_PREFIX=/opt/mesa-test mesa-run vulkaninfo --summary
+
+: "${MESA_PREFIX:=/opt/mesa-test}"
+lib="$MESA_PREFIX/lib/$(gcc -dumpmachine 2> /dev/null || echo aarch64-linux-gnu)"
+[ -d "$lib" ] || { echo "no Mesa libraries in $lib" >&2; exit 1; }
+[ $# -gt 0 ] || { echo "usage: MESA_PREFIX=/path mesa-run COMMAND [ARGS...]" >&2; exit 2; }
+
+export LD_LIBRARY_PATH="$lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+export LIBGL_DRIVERS_PATH="$lib/dri"
+export GBM_BACKENDS_PATH="$lib/gbm"
+for icd in "$MESA_PREFIX"/share/vulkan/icd.d/powervr_mesa_icd.*.json; do
+	VK_DRIVER_FILES="$icd"
+	break
+done
+export VK_DRIVER_FILES
+exec "$@"

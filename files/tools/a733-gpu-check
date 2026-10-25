@@ -1,0 +1,51 @@
+#!/bin/bash
+# SPDX-License-Identifier: MIT
+# Report the state of the open GPU stack on an A733 board.
+# Run as root (or with sudo) for dmesg, clock and IRQ details.
+
+section() { printf '\n== %s ==\n' "$1"; }
+
+section "System"
+uname -r
+tr -d '\0' < /proc/device-tree/model 2> /dev/null; echo
+
+section "Kernel modules"
+lsmod | grep -E '^(apercel|pvrsrvkm|gpu_sched|drm_exec|drm_shmem_helper) ' || echo "apercel not loaded"
+bound=no
+for d in /sys/bus/platform/drivers/apercel/*.gpu; do
+	[ -e "$d" ] && { echo "bound: $(basename "$d")"; bound=yes; }
+done
+[ "$bound" = yes ] || echo "no device bound to apercel"
+
+section "Firmware"
+ls -l /lib/firmware/apercel/ 2> /dev/null || echo "missing /lib/firmware/apercel"
+dmesg 2> /dev/null | grep -E 'apercel .*(firmware|FW version)' | tail -2
+
+section "GPU clock / temperature"
+grep -E 'gpu' /sys/kernel/debug/clk/clk_summary 2> /dev/null | awk '{print $1, $5}' | head -3 || true
+for z in /sys/class/thermal/thermal_zone*; do
+	[ "$(cat "$z/type" 2> /dev/null)" = gpu_thermal_zone ] && echo "gpu temp: $(($(cat "$z/temp") / 1000)) C"
+done
+
+section "CPU governor / GPU IRQ"
+cat /sys/devices/system/cpu/cpufreq/policy*/scaling_governor 2> /dev/null | sort | uniq -c
+irq="$(awk -F: '/IRQGPU/ { gsub(/ /, "", $1); print $1; exit }' /proc/interrupts)"
+[ -n "$irq" ] && echo "IRQGPU $irq affinity $(cat "/proc/irq/$irq/smp_affinity" 2> /dev/null)"
+
+section "Vulkan"
+if command -v vulkaninfo > /dev/null; then
+	vulkaninfo --summary 2> /dev/null | grep -E 'deviceName|driverInfo' || echo "vulkaninfo found no device"
+	vulkaninfo 2> /dev/null | grep -q VK_EXT_transform_feedback && echo "VK_EXT_transform_feedback: yes" || echo "VK_EXT_transform_feedback: no"
+else
+	echo "vulkaninfo not installed (apt install vulkan-tools)"
+fi
+
+section "OpenGL / GLES (zink)"
+if command -v eglinfo > /dev/null; then
+	eglinfo -B -p surfaceless 2> /dev/null | grep -E 'profile renderer|profile version' | sort -u
+else
+	echo "eglinfo not installed (apt install mesa-utils)"
+fi
+
+section "Recent GPU kernel messages"
+dmesg 2> /dev/null | grep -iE 'apercel|pvr_|drm_copy_field' | tail -8

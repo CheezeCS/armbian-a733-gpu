@@ -1,0 +1,5 @@
+#version 450
+// v = v * 2 + 1, checked by vktest.c
+layout(local_size_x = 64) in;
+layout(std430, binding = 0) buffer Data { uint v[]; } data;
+void main() { data.v[gl_GlobalInvocationID.x] = data.v[gl_GlobalInvocationID.x] * 2u + 1u; }

@@ -1,0 +1,90 @@
+#!/bin/bash
+# SPDX-License-Identifier: MIT
+#
+# Build Mesa (Imagination PowerVR Vulkan driver + zink) with the apercel
+# changes, natively on an A733 board. Takes 30-45 minutes on the board.
+#
+#   sudo a733-build-mesa                 # Mesa 26.3.0-rc2 -> /usr/local (default)
+#   sudo a733-build-mesa --mesa 26.1.8   # apercel's original 26.1.8 patch
+#   sudo a733-build-mesa --prefix /opt/mesa-test
+#   sudo a733-build-mesa --apercel /path/to/apercel   # default /usr/src/apercel
+#
+# The patches come from the apercel checkout (mesa/apercel-mesa*.patch).
+# Mesa 26.3 adds VK_EXT_transform_feedback for PowerVR (mesa!44385), which
+# lets zink expose OpenGL ES 3.1 / OpenGL 3.2 instead of ES 2.0 / GL 2.1.
+# A prefix other than /usr/local is not on the loader path: try such a build
+# with tools/mesa-run from the armbian-a733-gpu repository.
+
+set -euo pipefail
+
+MESA=26.3.0-rc2
+PREFIX=/usr/local
+WORKDIR=/var/tmp/a733-mesa
+APERCEL_SRC=/usr/src/apercel
+JOBS=6   # 4 GB boards run out of memory with the default (nproc + 2)
+
+while [ $# -gt 0 ]; do
+	case "$1" in
+		--mesa) MESA="$2"; shift 2 ;;
+		--prefix) PREFIX="$2"; shift 2 ;;
+		--workdir) WORKDIR="$2"; shift 2 ;;
+		--jobs) JOBS="$2"; shift 2 ;;
+		--apercel) APERCEL_SRC="$2"; shift 2 ;;
+		-h | --help) sed -n '3,18p' "$0"; exit 0 ;;
+		*) echo "unknown option: $1" >&2; exit 2 ;;
+	esac
+done
+
+case "$MESA" in
+	26.3.0-rc2)
+		SHA256=6b9154bc46ec73901555dbcb61600eb69607dc1da718a87e7a1c09a755bb1b6d
+		PATCH="$APERCEL_SRC/mesa/apercel-mesa-26.3.0-rc2.patch"
+		;;
+	26.1.8)
+		SHA256=b320f65874fd9653ac6c0bd1616605387344e1247411a50c797b5f3fb9dc0b55
+		PATCH="$APERCEL_SRC/mesa/apercel-mesa.patch"
+		;;
+	*) echo "unsupported Mesa version: $MESA (use 26.3.0-rc2 or 26.1.8)" >&2; exit 2 ;;
+esac
+[ -f "$PATCH" ] || { echo "patch not found: $PATCH" >&2; exit 1; }
+[ "$(id -u)" = 0 ] || { echo "run as root (installs packages and into $PREFIX)" >&2; exit 1; }
+
+export DEBIAN_FRONTEND=noninteractive
+# The PowerVR Vulkan driver compiles its internal shaders with mesa-clc, which
+# needs LLVM, clang and the SPIR-V translator of one LLVM major (19 on Trixie).
+apt-get update
+apt-get install -y build-essential meson ninja-build python3 python3-mako python3-yaml \
+	flex bison pkg-config zlib1g-dev libzstd-dev libexpat1-dev libdrm-dev libvulkan-dev \
+	clang libclang-cpp-dev libclang-19-dev llvm-19-dev libllvmspirvlib-19-dev spirv-tools \
+	libwayland-dev libwayland-egl-backend-dev wayland-protocols libudev-dev \
+	libx11-dev libxext-dev libxfixes-dev libx11-xcb-dev libxcb1-dev libxrandr-dev \
+	libxcb-glx0-dev libxcb-dri3-dev libxcb-present-dev libxcb-shm0-dev libxcb-randr0-dev \
+	libxcb-sync-dev libxshmfence-dev libxxf86vm-dev curl xz-utils patch
+export PATH="/usr/lib/llvm-19/bin:$PATH"
+
+mkdir -p "$WORKDIR" && cd "$WORKDIR"
+tarball="mesa-$MESA.tar.xz"
+[ -f "$tarball" ] || curl -fL --retry 3 -o "$tarball" "https://archive.mesa3d.org/$tarball"
+echo "$SHA256  $tarball" | sha256sum -c -
+
+rm -rf "mesa-$MESA"
+tar xf "$tarball"
+cd "mesa-$MESA"
+# both patch formats (git "a/ b/" and apercel's "apercel-mesa/") strip with -p1
+tr -d '\r' < "$PATCH" | patch -p1 --forward
+if [ "$MESA" = 26.1.8 ] && ! grep -q DRM_PVR_BO_CPU_CACHED include/drm-uapi/pvr_drm.h; then
+	# the apercel kernel module rejects BO flags outside bits 0-2
+	sed -i 's|^#define DRM_PVR_BO_ALLOW_CPU_USERSPACE_ACCESS _BITULL(2)|&\n#define DRM_PVR_BO_CPU_CACHED 0 /* apercel: no-op */|' \
+		include/drm-uapi/pvr_drm.h
+fi
+
+meson setup b --prefix="$PREFIX" -Dbuildtype=release \
+	-Dvulkan-drivers=imagination -Dgallium-drivers=zink \
+	-Degl=enabled -Dgbm=enabled -Dopengl=true \
+	-Dgles1=disabled -Dgles2=enabled \
+	-Dplatforms=x11,wayland -Dglx=dri -Dxlib-lease=disabled \
+	-Dllvm=enabled -Dmesa-clc=enabled -Dshader-cache=enabled -Dbuild-tests=false
+ninja -C b -j"$JOBS"
+ninja -C b install
+ldconfig
+echo "Mesa $MESA installed to $PREFIX. Log out and back in (or reboot), then run a733-gpu-check."

@@ -1,0 +1,50 @@
+#!/bin/bash
+# SPDX-License-Identifier: MIT
+#
+# Pre-seed Wi-Fi (and optionally users) into an Armbian image before writing it
+# to the SD card, so the board joins the network on first boot with no console.
+# Uses Armbian's first-boot autoconfig: https://docs.armbian.com/user-guide/autoconfig/
+# (values in /root/.not_logged_in_yet are applied by armbian-firstlogin).
+#
+#   sudo WIFI_SSID=MyNet WIFI_PSK=secret ./image-preset-wifi Armbian_*.img
+#
+# Optional variables: WIFI_COUNTRY (default US), ROOT_PASSWORD, USER_NAME,
+# USER_PASSWORD, USER_REALNAME. Without ROOT_PASSWORD the first console or SSH
+# login still asks to change the default root password.
+# Linux only (loop devices). On Windows run it inside WSL.
+
+set -euo pipefail
+
+image="${1:-}"
+[ -n "$image" ] && [ -f "$image" ] || { sed -n '4,14p' "$0"; exit 2; }
+[ "$(id -u)" = 0 ] || { echo "needs root (loop mount)" >&2; exit 1; }
+: "${WIFI_SSID:?set WIFI_SSID}" "${WIFI_PSK:?set WIFI_PSK}"
+WIFI_COUNTRY="${WIFI_COUNTRY:-US}"
+
+loop="$(losetup -f --show -P "$image")"
+mnt="$(mktemp -d)"
+cleanup() { umount "$mnt" 2> /dev/null || true; losetup -d "$loop" 2> /dev/null || true; rmdir "$mnt" 2> /dev/null || true; }
+trap cleanup EXIT
+mount "${loop}p1" "$mnt" 2> /dev/null || mount "$loop" "$mnt"
+
+f="$mnt/root/.not_logged_in_yet"
+[ -e "$f" ] || { echo "$f missing: not an unconfigured Armbian image" >&2; exit 1; }
+if grep -q '^PRESET_NET_WIFI_SSID=' "$f"; then
+	echo "Wi-Fi presets already present in this image, nothing changed." >&2
+	exit 0
+fi
+
+q() { printf '%q' "$1"; }
+{
+	echo 'PRESET_NET_CHANGE_DEFAULTS="1"'
+	echo 'PRESET_NET_WIFI_ENABLED="1"'
+	echo "PRESET_NET_WIFI_SSID=$(q "$WIFI_SSID")"
+	echo "PRESET_NET_WIFI_KEY=$(q "$WIFI_PSK")"
+	echo "PRESET_NET_WIFI_COUNTRYCODE=$(q "$WIFI_COUNTRY")"
+	[ -n "${ROOT_PASSWORD:-}" ] && echo "PRESET_ROOT_PASSWORD=$(q "$ROOT_PASSWORD")"
+	[ -n "${USER_NAME:-}" ] && echo "PRESET_USER_NAME=$(q "$USER_NAME")"
+	[ -n "${USER_PASSWORD:-}" ] && echo "PRESET_USER_PASSWORD=$(q "$USER_PASSWORD")"
+	[ -n "${USER_REALNAME:-}" ] && echo "PRESET_DEFAULT_REALNAME=$(q "$USER_REALNAME")"
+} >> "$f"
+sync
+echo "Wi-Fi '$WIFI_SSID' preset written to $(basename "$image")."

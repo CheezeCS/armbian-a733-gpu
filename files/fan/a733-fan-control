@@ -1,0 +1,59 @@
+#!/bin/bash
+# SPDX-License-Identifier: MIT
+#
+# On/off fan control with hysteresis for boards whose fan cannot be run at
+# partial PWM (Orange Pi Zero 3W: 2-pin fan switched on its ground side).
+#
+# The fan goes to 100% when the hottest of the watched thermal zones reaches
+# FAN_ON_C, and off once all are at or below FAN_OFF_C and it has run at least
+# FAN_MIN_ON_S seconds. If the service stops or fails, the fan is left ON.
+#
+# Settings: /etc/default/a733-fan (FAN_ON_C, FAN_OFF_C, FAN_MIN_ON_S,
+# FAN_INTERVAL_S, FAN_ZONES).
+
+FAN_ON_C=60
+FAN_OFF_C=50
+FAN_MIN_ON_S=30
+FAN_INTERVAL_S=2
+FAN_ZONES="cpub_thermal_zone cpul_thermal_zone gpu_thermal_zone"
+[ -r /etc/default/a733-fan ] && . /etc/default/a733-fan
+
+pwm=""
+for h in /sys/class/hwmon/hwmon*; do
+	[ "$(cat "$h/name" 2> /dev/null)" = pwmfan ] && pwm="$h/pwm1" && break
+done
+[ -n "$pwm" ] || { echo "a733-fan-control: no pwm-fan hwmon device" >&2; exit 1; }
+
+zones=()
+for z in /sys/class/thermal/thermal_zone*; do
+	for want in $FAN_ZONES; do
+		[ "$(cat "$z/type" 2> /dev/null)" = "$want" ] && zones+=("$z/temp")
+	done
+done
+[ ${#zones[@]} -gt 0 ] || { echo "a733-fan-control: no thermal zones found" >&2; exit 1; }
+
+set_fan() { echo "$1" > "$pwm"; }
+fail_safe() { set_fan 255; exit 0; }
+trap fail_safe EXIT INT TERM
+
+on=0
+since=0
+set_fan 0
+echo "a733-fan-control: on >= ${FAN_ON_C}C, off <= ${FAN_OFF_C}C, zones: $FAN_ZONES"
+while :; do
+	hottest=0
+	for t in "${zones[@]}"; do
+		read -r v < "$t" 2> /dev/null || continue
+		[ "$v" -gt "$hottest" ] && hottest=$v
+	done
+	hottest=$((hottest / 1000))
+	now=$(date +%s)
+	if [ $on = 0 ] && [ "$hottest" -ge "$FAN_ON_C" ]; then
+		set_fan 255; on=1; since=$now
+		echo "fan on (${hottest}C)"
+	elif [ $on = 1 ] && [ "$hottest" -le "$FAN_OFF_C" ] && [ $((now - since)) -ge "$FAN_MIN_ON_S" ]; then
+		set_fan 0; on=0
+		echo "fan off (${hottest}C)"
+	fi
+	sleep "$FAN_INTERVAL_S"
+done

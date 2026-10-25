@@ -1,0 +1,43 @@
+#!/bin/bash
+# Re-enable the HDMI output and put the fbcon console back on it.
+#
+# The vendor sunxi-drm HDMI driver powers the TMDS output down on HPD loss
+# ("hdmi drv has been disable!") but leaves the DRM CRTC state active, so a
+# later reconnect never re-enables it: the monitor reports "no signal".
+# A DPMS off/on cycle forces a full atomic disable/enable (HDMI PHY re-init),
+# and rebinding fbcon re-attaches the console framebuffer to the plane.
+#
+# Run by hdmi-console-restore.service: at boot and on DRM hotplug uevents
+# (99-hdmi-console-restore.rules). Needs modetest (package libdrm-tests).
+
+set -u
+STAMP=/run/hdmi-console-restore.stamp
+MIN_INTERVAL=10   # seconds; the monitor toggles HPD while it hunts for input
+
+# let HPD settle (monitors drop/raise it a few times while switching inputs)
+sleep 3
+
+now=$(date +%s)
+last=$(cat "$STAMP" 2>/dev/null || echo 0)
+(( now - last < MIN_INTERVAL )) && exit 0
+
+# connector id of the first connected HDMI connector, e.g. "146"
+conn=$(modetest -M sunxi-drm -c 2>/dev/null |
+	awk '$3 == "connected" && $4 ~ /^HDMI-A/ { print $1; exit }')
+[[ -n "$conn" ]] || exit 0
+
+echo "$now" > "$STAMP"
+
+# a running compositor is DRM master: setting DPMS fails there, which is fine,
+# the compositor handles hotplug itself
+modetest -M sunxi-drm -w "${conn}:DPMS:3" >/dev/null 2>&1 || exit 0
+sleep 1
+modetest -M sunxi-drm -w "${conn}:DPMS:0" >/dev/null 2>&1
+
+for vt in /sys/class/vtconsole/vtcon*; do
+	grep -q "frame buffer" "$vt/name" 2>/dev/null || continue
+	echo 0 > "$vt/bind"
+	echo 1 > "$vt/bind"
+done
+
+logger -t hdmi-console-restore "HDMI connector $conn re-enabled, fbcon rebound"

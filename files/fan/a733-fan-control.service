@@ -1,0 +1,11 @@
+[Unit]
+Description=On/off fan control with hysteresis (A733 boards)
+After=systemd-modules-load.service
+
+[Service]
+ExecStart=/usr/local/sbin/a733-fan-control
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

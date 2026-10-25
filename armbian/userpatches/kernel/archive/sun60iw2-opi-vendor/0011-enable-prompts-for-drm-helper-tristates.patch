@@ -1,0 +1,41 @@
+drm/kconfig: give the apercel helper tristates a prompt
+
+DRM_EXEC, DRM_GEM_SHMEM_HELPER and DRM_SCHED are prompt-less (hidden)
+tristates in this tree, so a user value for them is discarded by
+olddefconfig and the gpu-sched/drm-exec/drm-shmem-helper modules can
+never be built -- yet the apercel out-of-tree GPU driver imports their
+symbols. Add a prompt (and default m) to each so they become ordinary
+settable tristates.
+
+--- a/drivers/gpu/drm/Kconfig
++++ b/drivers/gpu/drm/Kconfig
+@@ -212,7 +212,8 @@
+           If in doubt, say "N".
+ 
+ config DRM_EXEC
+-	tristate
++	tristate "DRM execution context helper (module, for apercel)"
++	default m
+ 	depends on DRM
+ 	help
+ 	  Execution context for command submissions
+@@ -244,7 +245,8 @@
+ 	  Choose this if you need the GEM DMA helper functions
+ 
+ config DRM_GEM_SHMEM_HELPER
+-	tristate
++	tristate "DRM GEM shmem helper (module, for apercel)"
++	default m
+ 	depends on DRM && MMU
+ 	help
+ 	  Choose this if you need the GEM shmem helper functions
+@@ -254,7 +256,8 @@
+ 	depends on DRM
+ 
+ config DRM_SCHED
+-	tristate
++	tristate "DRM GPU scheduler (module, for apercel)"
++	default m
+ 	depends on DRM
+ 
+ source "drivers/gpu/drm/i2c/Kconfig"

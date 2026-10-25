@@ -1,0 +1,38 @@
+// SPDX-License-Identifier: GPL-2.0
+/*
+ * Orange Pi Zero 3W (Allwinner A733): fan on/off control.
+ *
+ * The 2-pin fan header is switched on its negative side by a MOSFET whose gate
+ * is PD5 = PWM0 channel 5 (schematic net FAN_EN_PWM), the positive side is
+ * VCC-5V through 1 ohm. Tested on the board: the fan only runs on a constant
+ * high level. Any PWM below 100% (40 kHz, 100 Hz, 25 Hz; also after a 100%
+ * kick-start) stalls it, because interrupting its ground resets the fan's own
+ * motor controller. So the fan can only be on or off.
+ *
+ * The vendor DT drives it from the CPU zones' first trip (55 C) through the
+ * step_wise governor with levels 0/50/102/170/255: it never starts on the low
+ * levels, and step_wise in 6.6 ignores trip hysteresis, so plain on/off at a
+ * trip would cycle every few seconds. Instead:
+ *   - only two levels (off, 100%);
+ *   - move the kernel's fan bindings to the critical trips, which never reach
+ *     the governor (CPU frequency throttling bindings stay untouched);
+ *   - a733-fan-control (user space) switches the fan with hysteresis.
+ *
+ * The vendor PWM driver applies the PD5 pinmux itself when the channel is
+ * enabled; do not add pinctrl to the pwm-fan node (it makes the two devices
+ * fight over PD5 and pwm-fan fails to probe).
+ */
+/dts-v1/;
+/plugin/;
+
+&fan0 {
+	cooling-levels = <0 255>;
+};
+
+&{/thermal-zones/cpub_thermal_zone/cooling-maps/map1} {
+	trip = <&cpub_crit>;
+};
+
+&{/thermal-zones/cpul_thermal_zone/cooling-maps/map1} {
+	trip = <&cpul_crit>;
+};

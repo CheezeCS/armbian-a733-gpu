@@ -1,0 +1,34 @@
+name: checks
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  shell:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Syntax
+        run: |
+          for f in build.sh armbian/userpatches/extensions/*.sh files/mesa/a733-build-mesa \
+                   files/sbin/* files/hdmi-fix/hdmi-console-restore files/tools/* files/fan/a733-fan-control \
+                   tools/headless-weston-run tools/mesa-run tools/image-preset-wifi; do
+            bash -n "$f"
+          done
+      - name: ShellCheck
+        run: |
+          sudo apt-get install -y shellcheck
+          shellcheck -S warning build.sh files/mesa/a733-build-mesa files/sbin/* \
+            files/hdmi-fix/hdmi-console-restore files/tools/* files/fan/a733-fan-control \
+            tools/headless-weston-run tools/mesa-run tools/image-preset-wifi
+      - name: No CRLF
+        run: "! git grep -I -l $'\\r' -- ."
+  patches:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fan overlay compiles
+        run: |
+          sudo apt-get install -y device-tree-compiler
+          dtc -@ -q -I dts -O dtb -o /tmp/a733-fan.dtbo files/overlay/a733-fan.dts

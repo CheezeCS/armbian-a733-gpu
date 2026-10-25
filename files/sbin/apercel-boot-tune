@@ -1,0 +1,24 @@
+#!/bin/bash
+# SPDX-License-Identifier: MIT
+# Boot-time tuning for the apercel GPU stack:
+#   - "performance" cpufreq governor on every policy;
+#   - pin the GPU interrupt (IRQGPU) to the highest-numbered (big) core.
+# Both reduce frame-time stutter (see the apercel README).
+
+for policy in /sys/devices/system/cpu/cpufreq/policy*; do
+	echo performance > "$policy/scaling_governor" 2> /dev/null
+done
+
+# IRQGPU appears once apercel has probed; wait up to 30 s for it.
+irq=""
+for _ in $(seq 1 30); do
+	irq="$(awk -F: '/IRQGPU/ { gsub(/ /, "", $1); print $1; exit }' /proc/interrupts)"
+	[ -n "$irq" ] && break
+	sleep 1
+done
+
+if [ -n "$irq" ]; then
+	mask="$(printf '%x' "$((1 << ($(nproc) - 1)))")"
+	echo "$mask" > "/proc/irq/${irq}/smp_affinity" 2> /dev/null
+fi
+exit 0

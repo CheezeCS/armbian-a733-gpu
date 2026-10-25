@@ -1,0 +1,6 @@
+/work/
+*.img
+*.img.xz
+*.deb
+tools/vktest/vktest
+tools/vktest/*.spv
