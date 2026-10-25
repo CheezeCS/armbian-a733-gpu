@@ -71,21 +71,30 @@ them; for manual copies use `sed -i 's/\r$//' file`.
 
 ## KDE Plasma (Wayland)
 
-Plasma 6.3 runs with GPU compositing (KWin picks `card0` for output and renders
-OpenGL 3.2 through zink on the PowerVR), but needs two workarounds, set in the
-session environment:
+Plasma 6.3 runs with GPU compositing: KWin picks `card0` (sunxi-drm) for output,
+skips `card1` (apercel, no KMS), and renders OpenGL 3.2 (or GLES 3.1 with
+`KWIN_COMPOSE=O2ES`) through zink on the PowerVR. Tested on the Zero 3W with
+Mesa 26.3; KDE is not part of the images built here (sway is).
 
-- `KWIN_FORCE_SW_CURSOR=1`: the vendor `sunxi-drm` cursor plane shows garbage
-  (a tiny cursor in a corner plus a stretched black bar). A software cursor is
-  fine. wlroots compositors have the same switch: `WLR_NO_HARDWARE_CURSORS=1`.
-- `KWIN_USE_BUFFER_AGE=0`: with zink the EGL buffer age KWin gets does not match
-  the buffer contents, so partial repaints leave stale areas (a selection
-  rectangle stays on screen for seconds). Disabling it fixes the artefacts but
-  every frame is then repainted in full, which costs FPS at high resolutions.
-  The proper fix (buffer age through zink/PowerVR WSI) is not done.
+**At 1920x1080 it works well**: smooth, hardware cursor fine, no artefacts
+except the one below. **At 3440x1440 it is slow** (5-10 fps in the desktop
+overview, KWin logs "The main thread was hanging temporarily!") and shows
+these problems:
 
-Animations are noticeably slow at 3440x1440. KDE is not part of the images
-built here; sway is.
+| Symptom | Cause | Workaround |
+|---|---|---|
+| Horizontal cursor-coloured stripes left behind when the mouse moves fast | KWin's Shake Cursor effect (Plasma 6): the enlarged, animated cursor is drawn in the scene and its old positions are not always repainted | disable it: System Settings > Accessibility > Shake Cursor, or `kwriteconfig6 --file kwinrc --group Plugins --key shakecursorEnabled false` |
+| Two cursors: a tiny one in a corner plus a stretched black bar (3440x1440 only) | the `sunxi-drm` hardware cursor plane misbehaves in this wide mode; at 1920x1080 it is fine | `KWIN_FORCE_SW_CURSOR=1` (wlroots: `WLR_NO_HARDWARE_CURSORS=1`) |
+| Selection rectangle stays on screen for a second or two, low FPS | compositing 3440x1440 through zink is too slow; gone at 1920x1080 | lower resolution, fewer effects (blur, animations) |
+
+Ruled out on the way, for the record: GPU hangs or resets (kernel log clean),
+KWin's multi-GPU import path (one swapchain of 5 buffers on `card0`), GPU cache
+coherency with the display engine (sway on the same GPU and display is clean),
+zink's desktop-GL path (same with GLES), rejected KMS commits (none in KWin's
+DRM debug log). `KWIN_USE_BUFFER_AGE=0` hides all repaint artefacts by
+repainting every frame in full, at a large FPS cost; with the workarounds above
+it is not needed. KWin does not take the buffer age from EGL on its DRM backend
+(it keeps its own swapchain), so "wrong EGL buffer age" is not the cause.
 
 ## Wi-Fi (AIC8800, WPA3)
 

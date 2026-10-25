@@ -58,7 +58,7 @@ Tested on an **Orange Pi Zero 3W** (4 GB), Armbian trixie, kernel
 | Vesktop 1.6.8 under sway, Mesa 26.3 | starts and renders (GPU process stays up) |
 | Wi-Fi WPA3-SAE (AIC8800), Wi-Fi 6 80 MHz | works; netplan needs a workaround ([details](docs/troubleshooting.md#wi-fi-aic8800-wpa3)) |
 | Fan (2-pin header) | works as on/off with hysteresis (60 C on / 50 C off); PWM speed control is impossible with this fan wiring ([details](docs/fan.md)) |
-| KDE Plasma 6.3 (Wayland), Mesa 26.3 | works with two workarounds, tried on the board (not in images); slow animations at 3440x1440 ([details](docs/troubleshooting.md#kde-plasma-wayland)) |
+| KDE Plasma 6.3 (Wayland), Mesa 26.3 | tried on the board (not in images): smooth at 1920x1080 (disable Shake Cursor); slow at 3440x1440 ([details](docs/troubleshooting.md#kde-plasma-wayland)) |
 | Xfce / X11 session | not tested; expected without GPU acceleration (no glamor path for the split display/render devices) |
 | Suspend/resume, long-running stability | not tested |
 | `build.sh --kernel-only` (kernel + apercel packages) | built and installed on the test board |
